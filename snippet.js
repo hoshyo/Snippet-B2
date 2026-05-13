@@ -51,19 +51,6 @@ for (const p of ALLOWED_ORIGINS) {
   else ALLOW_EXACT.add(p);
 }
 
-// MIME 表：B2 返回 application/octet-stream 或 binary/* 时按扩展名兜底
-const MIME = {
-  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif",
-  webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp",
-  tif: "image/tiff", tiff: "image/tiff",
-  pdf: "application/pdf",
-  txt: "text/plain; charset=utf-8",
-  html: "text/html; charset=utf-8", htm: "text/html; charset=utf-8",
-  json: "application/json", css: "text/css", js: "application/javascript",
-};
-// 只对图片类强制 inline，其他类型保留 B2 原 Content-Disposition
-const IMAGE_EXT = new Set(["jpg","jpeg","png","gif","webp","svg","bmp","tif","tiff"]);
-
 // 已知"长期"错误码（路径真不存在 / 权限错 / 后端持续故障）—— 这类响应值得短期缓存
 const LONG_TERM_ERROR_STATUS = new Set([404, 403, 502, 500]);
 
@@ -158,7 +145,7 @@ async function fetchAndBuildResponse(path, method) {
   const b2 = await fetchFromB2(path, method);
 
   if (b2.ok || b2.status === 304) {
-    return { response: buildSuccessResponse(b2, path), shouldCache: true };
+    return { response: buildSuccessResponse(b2), shouldCache: true };
   }
   if (LONG_TERM_ERROR_STATUS.has(b2.status)) {
     return { response: await buildLongTermErrorResponse(b2), shouldCache: true };
@@ -167,13 +154,9 @@ async function fetchAndBuildResponse(path, method) {
   return { response: buildPassthroughResponse(b2), shouldCache: false };
 }
 
-// 成功响应（2xx/304）：自动识别 Content-Type、Disposition，并设置长期缓存
-function buildSuccessResponse(b2, path) {
+// 成功响应（2xx/304）：保持 B2 原始 Content-Type / Content-Disposition，叠加长期缓存
+function buildSuccessResponse(b2) {
   const response = new Response(b2.body, b2);
-  const ext = extractExt(path);
-
-  response.headers.set("Content-Type", resolveContentType(b2, ext));
-  if (IMAGE_EXT.has(ext)) response.headers.set("Content-Disposition", "inline");
   response.headers.set("Cache-Control", CACHE_CONTROL_OK);
   response.headers.set("x-snippets-cache", "stored-success");
   return response;
@@ -249,21 +232,6 @@ function injectDebugHeaders(response, path, allowedOrigin) {
   response.headers.set("x-debug-request-path", path);
   response.headers.set("x-debug-b2-bucket", B2_BUCKET);
   response.headers.set("x-debug-allowed-origin", allowedOrigin || "(blocked)");
-}
-
-// 取路径最后一段扩展名（小写，不含点）
-function extractExt(path) {
-  const dot = path.lastIndexOf('.');
-  return dot >= 0 ? path.slice(dot + 1).toLowerCase() : '';
-}
-
-// B2 返回的 Content-Type 不理想（octet-stream / binary/*）时按扩展名覆盖
-function resolveContentType(b2, ext) {
-  const ct = b2.headers.get("Content-Type") || "application/octet-stream";
-  if ((ct === "application/octet-stream" || ct.startsWith("binary/")) && MIME[ext]) {
-    return MIME[ext];
-  }
-  return ct;
 }
 
 // ╔══════════════════════════════════════════════════════════════════╗
